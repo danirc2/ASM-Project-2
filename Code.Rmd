@@ -1,0 +1,137 @@
+---
+title: "Project: Time Series Analysis (ConsumElec.dat)"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+# Load necessary libraries
+library(tseries)
+library(forecast)
+```
+
+### Time Series Analysis using Box-Jenkins Methodology
+
+### 1. Identification
+
+#### 1.1. Exploratory Data Analysis and Stationarity
+
+##### Data Import and Initial Plot
+
+```{r data_import}
+serie=window(ts(read.table("ConsumElec.dat"),start=1990,freq=12))
+plot(serie, main="Gross internal consumption of electrical energy in Spain", ylab="GwH")
+abline(v=1985:2020,lty=3,col=4)
+#dev.copy(png, filename = "plots/raw_series.png", width = 900, height = 600)
+#dev.off()
+```
+
+##### Variance Stabilization
+
+The plot clearly shows an increasing trend and the variance appears to increase with the level of the series, suggesting a multiplicative model structure (heteroscedasticity). We apply the logarithmic transformation to stabilize the variance.
+
+```{r log_transform_variance}
+lnserie <- log(serie)
+plot(lnserie)
+abline(h = mean(lnserie), col = 2, lty = 2)
+#dev.copy(png, filename = "plots/log_transform_variance.png", width = 900, height = 600)
+#dev.off()
+```
+
+##### Differencing for Stationarity (Trend and Seasonality)
+
+The log-transformed series still shows a clear trend and strong seasonality.
+
+**1. Seasonal Differencing**
+
+We apply a seasonal difference of order $D=1$ (lag 12) to remove seasonality.
+
+```{r seasonal_differencing}
+d12lnserie <- diff(lnserie, lag = 12)
+plot(d12lnserie)
+abline(h = mean(d12lnserie), col = 2, lty = 2)
+#dev.copy(png, filename = "plots/seasonal_differencing.png", width = 900, height = 600)
+#dev.off()
+```
+
+**2. Regular Differencing**
+
+The seasonally differenced series still shows a slight drift/trend (the mean is not exactly zero, and the series does not fluctuate around a fixed value). We apply an additional regular difference of order $d=1$.
+
+```{r regular_differencing}
+d1d12lnserie <- diff(d12lnserie, lag = 1)
+plot(d1d12lnserie)
+abline(h = 0, col = 2, lty = 2)
+#dev.copy(png, filename = "plots/regular_differencing.png", width = 900, height = 600)
+#dev.off()
+```
+
+**2. Additional Regular Differencing**
+
+Let's check if another regular differencing is needed. Compare the variance of each step to see if we can avoid any.
+
+```{r regular_differencing 2}
+d1d1d12lnserie <- diff(d1d12lnserie, lag = 1)
+plot(d1d1d12lnserie)
+abline(h = 0, col = 2, lty = 2)
+#dev.copy(png, filename = "plots/regular_differencing_2.png", width = 900, height = 600)
+#dev.off()
+
+# Check for over-differencing (variance comparison)
+var_raw <- var(lnserie)
+var_d12 <- var(d12lnserie)
+var_d1d12 <- var(d1d12lnserie)
+var_d1d1d12 <- var(d1d1d12lnserie)
+
+cat(sprintf("Variance of ln(X_t): %f\n", var_raw))
+cat(sprintf("Variance of D=1 Series: %f\n", var_d12))
+cat(sprintf("Variance of d=1, D=1 Series: %f\n", var_d1d12))
+cat(sprintf("Variance of d=2, D=1 Series: %f\n", var_d1d1d12))
+```
+Clearly a second regular difference is not needed. One could argue that the first one is also not needed because the variance is slightly higher but we will keep both models and validate later
+
+
+#### 1.2. ACF and PACF Analysis of the Stationary Series (d=1, D=1)
+
+The final stationary series is $W_t = (1-B)(1-B^{12})\ln X_t$, meaning we have confirmed $d=1$ and $D=1$. Now we determine $p, q, P, Q$. 
+```{r acf_pacf_stationary}
+par(mfrow = c(1, 2))
+acf(d1d12lnserie, lag.max = 60, main = "ACF of W_t", lwd = 2)
+pacf(d1d12lnserie, lag.max = 60, main = "PACF of W_t", lwd = 2)
+par(mfrow = c(1, 1))
+#dev.copy(png, filename = "plots/acf_pacf_stationary_d1D1.png", width = 1200, height = 600)
+#dev.off()
+```
+
+Regarding the non seasonal component:
+Looking at the plots it is pretty clear that the finite number of lags is found on the ACF. Since we only have one significant lag, we suggest MA(1).
+
+Regarding the seasonal component:
+Also looking at the plots it is pretty clear that the finite number of lags is found on the ACF. Since we only have one significant lag, we suggest MA(1).
+
+Thus, the clear candidate is SARIMA$(0,1,1)(0,1,1)_{12}$. 
+
+If we assume that the finite number of lags is found in the PACF we could have an AR(4) for the non-seasonal component and an AR(2) for the seasonal component. We could then propose:
+
+SARIMA$(0,1,1)(2,1,0)_{12}$
+SARIMA$(4,1,0)(0,1,1)_{12}$
+SARIMA$(4,1,0)(2,1,0)_{12}$
+
+#### 1.2.2 ACF and PACF Analysis of the Stationary Series (d=0, D=1)
+
+```{r acf_pacf_stationary}
+par(mfrow = c(1, 2))
+acf(d12lnserie, lag.max = 60, main = "ACF of W_t", lwd = 2)
+pacf(d12lnserie, lag.max = 60, main = "PACF of W_t", lwd = 2)
+par(mfrow = c(1, 1))
+#dev.copy(png, filename = "plots/acf_pacf_stationary_d0D1.png", width = 1200, height = 600)
+#dev.off()
+```
+Non-seasonal component:
+Clearly the finite number is not in the ACF. Since there are 2 relevant lags in the PACF, we could argue AR(2). If none are finite, we can argue ARMA(1,1)
+
+Seasonal component:
+Clearly none are finite. I would argue ARMA(1,1).
+
+So we have as candidates SARIMA$(2,0,0)(1,1,1)_{12}$ and SARIMA$(1,0,1)(1,1,1)_{12}$.
+
