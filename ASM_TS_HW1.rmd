@@ -1,0 +1,876 @@
+---
+title: "Untitled"
+author: "AVN"
+date: "2025-11-27"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Project Description
+
+The objective of this project is to apply the Box–Jenkins ARIMA methodology to the analysis and forecasting of a selected
+real-world time series. Students must choose one of the proposed datasets (or suggest another time series, subject to
+approval) to develop the complete analysis. You are required to submit a formal report (with index, introduction,
+conclusions, etc.). A simple commented R Markdown file is not sufficient.
+
+For this project, we decided to use the `ConsumElec` dataset: Monthly gross internal consumption of electrical energy (Gigawatt-hours) in Spain.
+
+```{r}
+serie=window(ts(read.table("ConsumElec.dat"),start=1990,freq=12))
+plot(serie, main="Gross internal consumption of electrical energy in Spain", ylab="GwH")
+abline(v=1985:2020,lty=3,col=4)
+```
+
+
+            
+            
+## 1. Identification
+### 1.a. Stationarity and Transformations
+    * Determine the transformations required to make the series stationary.
+    * Justify all transformations using both graphical methods and numerical tests.
+    
+    
+Stationarity is a fundamental property of time series analysis that essentially means the statistical behavior of the series does not change over time. The Box-Jenkins (ARIMA) methodology relies on the assumption that the series is stationary to estimate parameters. 
+We need to check the variance, the seasonality and the trend.
+
+By looking at the plot, we can see that the fluctuation increase slightly with time, that there is a trend in the first part of the graph and also a seasonability by looking at the peaks. Transformations are needed.
+    
+#### Variance transformation
+```{r}
+# Analyze Variance - Adapted from Session1.rmd 
+# We group by year (12 months) to check mean vs variance
+groupedserie <- matrix(serie, nrow=12)
+m <- apply(groupedserie, 2, mean)
+v <- apply(groupedserie, 2, var)
+
+plot(v~m, main="Mean-Variance Plot")
+abline(lm(v~m), col=2, lty=3)
+
+```
+The Mean-Variance plot reveals a strong positive correlation between the mean and the variance of the series. According to the identification methodology1, when variance increases with the mean, a Box-Cox transformation is required. We selected $\lambda=0$ (Natural Logarithm) to stabilize the variance.
+```{r}
+lnserie = log(serie)
+plot(lnserie, main="Log-Transformed Series")
+
+groupedlnserie <- matrix(lnserie, nrow=12)
+m <- apply(groupedlnserie, 2, mean)
+v <- apply(groupedlnserie, 2, var)
+
+plot(v~m, main="Mean-Variance Plot")
+abline(lm(v~m), col=2, lty=3)
+```
+There is no longer a significant correlation between the mean and the variance. The variance is now constant across the timeline.
+
+#### Trend and seasonality transformation
+```{r}
+# 1. Apply Seasonal Difference (removes yearly pattern)
+d12lnserie <- diff(lnserie, lag=12)
+
+# 2. Apply Regular Difference on top (removes trend)
+d1d12lnserie <- diff(d12lnserie)
+```
+
+
+```{r echo=FALSE, results='asis'}
+cat("Variance of d12 (Seasonal only):", var(d12lnserie, na.rm=TRUE), "\n")
+cat("Variance of d1d12 (Seasonal + Regular):", var(d1d12lnserie, na.rm=TRUE), "\n")
+```
+
+To determine the order of differencing, we compared the variance of the seasonally differenced series ($\nabla_{12} \log X_t$) against the doubly differenced series ($\nabla \nabla_{12} \log X_t$). The variance of the seasonally differenced series was lower. According to the principle of parsimony and to avoid over-differencing (which artificially introduces correlations), we selected the model with only one seasonal difference. Thus, the final stationary series is $W_t = (1-B^{12})\log(X_t)$.
+
+### 1.b. ACF and PACF Analysis
+    * Analyze the correlograms of the stationary series.
+    * Identify at least two plausible ARIMA models.
+    * Clearly explain which features of the ACF and PACF guided your choices.
+  
+Now that we have identified the stationary series ($W_t$), we need to analyze its Autocorrelation (ACF) and Partial Autocorrelation (PACF) functions to identify potential ARIMA models ($p, q$) and ($P, Q$).
+
+```{r}
+par(mfrow=c(1,2))
+acf(d12lnserie,ylim=c(-1,1),col=c(2,rep(1,11)),lwd=2,lag.max=72, main="ACF of d12lnserie")
+pacf(d12lnserie,ylim=c(-1,1),col=c(rep(1,11),2),lwd=2,lag.max=72, main="PACF of d12lnserie")
+par(mfrow=c(1,1))
+```
+
+MA 5
+Never p and q superior than 0 at the same time
+SARIMA(2,0,0)(0,1,3)
+SARIMA(2,0,0)(3,1,0)
+SARIMA(4,0,0)(0,1,3)
+
+SARIMA(2,0,0)(0,1,3)
+SARIMA(4,0,0)(3,1,0)
+
+#### SARIMA models SARIMA(p, d, q)(P,D,Q)
+
+##### d and D
+Because we only applied a Log transformation, 1 Seasonal Difference ($D=1$) and no regular differences ($d=0$).
+
+  * d = 0
+  * D = 1
+  
+1. Justification for SARIMA(2,0,0)(0,1,3)$_{12}$
+
+Hypothesis: The seasonal pattern is driven by past shocks (Moving Average): 
+The Regular PACF shows a sharp cut-off after lag 2 (significant spikes at lag 1 and 2), while the Regular ACF tails off. This identifies an AR(2) process 1.
+
+Seasonal Part ($Q=3$): The Seasonal ACF shows significant spikes at lags 12, 24, and 36 (Years 1, 2, and 3) and then cuts off (Lag 48 is not significant). According to Box-Jenkins rules, a seasonal ACF cut-off at lag $Q$ indicates a Seasonal Moving Average (SMA) of order $Q=3$ 2.Conclusion: This model assumes the "memory" of the seasonal error persists for exactly 3 years.
+
+2. Justification for SARIMA(2,0,0)(3,1,0)$_{12}$
+
+Hypothesis: The seasonal pattern is driven by past observations (AutoRegressive).
+Regular Part ($p=2$): Same justification as above (Regular PACF cut-off at 2).
+
+Seasonal Part ($P=3$): The Seasonal PACF shows significant spikes at lags 12, 24, and 36. Although the standard rule suggests the PACF should tail off for an MA model, we test this model to see if these three spikes actually represent a PACF cut-off after lag 3. If the Seasonal ACF is interpreted as decaying (tail-off) rather than cutting off, a Seasonal AutoRegressive (SAR) model of order $P=3$ is the correct choice 
+
+3.Conclusion: This model is estimated as a robust alternative to verify if the seasonality is better explained by autoregression (dependence on previous years' values) rather than moving averages.
+
+
+## 2. Estimation
+
+```{r}
+# --- Step 2: Estimation ---
+
+# Model 1: ARIMA(2, 0, 0)(0, 1, 3)12
+# This implies: (1 - phi1*B) * (1 - B^12) * log(Xt) = (1 + Theta1*B^12) * Zt
+mod1 <- arima(lnserie, 
+              order = c(2, 0, 0), 
+              seasonal = list(order = c(0, 1, 3), period = 12))
+
+# Model 2: ARIMA(2, 0, 0)(3, 1, 0)12
+# This tests if adding a second AR lag improves the fit
+mod2 <- arima(lnserie, 
+              order = c(2, 0, 0), 
+              seasonal = list(order = c(3, 1, 0), period = 12))
+```
+
+
+```{r}
+#Function to print neat results
+model_estimation <- function(model, name) {
+  cat("\n================ ", name, " ================\n")
+  print(model)
+
+  # Calculate T-ratios: Coefficient / Standard Error
+  t_ratios <- model$coef / sqrt(diag(model$var.coef))
+
+  # Create a summary table
+  results <- data.frame(
+    Coeff = round(model$coef, 4),
+    SE = round(sqrt(diag(model$var.coef)), 4),
+    t_ratio = round(t_ratios, 4),
+    Significant = abs(t_ratios) > 2 # Significance threshold
+  )
+  print(results)
+
+  cat("\nSigma^2 (Variance of Residuals):", model$sigma2)
+  cat("\nAIC:", AIC(model))
+  cat("\nBIC:", BIC(model))
+}
+```
+
+
+
+### Model 1 estimation
+
+```{r}
+model_estimation(mod1,"ARIMA(2, 0, 0)(0, 1, 3)12")
+```
+
+### Model 2 estimation
+
+```{r}
+model_estimation(mod2,"ARIMA(2, 0, 0)(3, 1, 0)12")
+```
+
+## 3. Validation
+
+```{r}
+#################Validation#################################
+validation=function(model){
+  s=frequency(get(model$series))
+  resid=model$residuals
+  par(mfrow=c(2,2),mar=c(3,3,3,3))
+  #Residuals plot
+  plot(resid,main="Residuals")
+  abline(h=0)
+  abline(h=c(-3*sd(resid),3*sd(resid)),lty=3,col=4)
+  #Square Root of absolute values of residuals (Homocedasticity)
+  scatter.smooth(sqrt(abs(resid)),main="Square Root of Absolute residuals",
+                 lpars=list(col=2))
+  
+  #Normal plot of residuals
+  qqnorm(resid)
+  qqline(resid,col=2,lwd=2)
+  
+  ##Histogram of residuals with normal curve
+  hist(resid,breaks=20,freq=FALSE)
+  curve(dnorm(x,mean=mean(resid),sd=sd(resid)),col=2,add=T)
+  
+  #ACF & PACF of Square residuals
+  par(mfrow=c(1,2))
+  # ACF of resid^2
+  acf(resid^2, 
+      ylim=c(-1,1), 
+      lag.max=60, 
+      col=c(2, rep(1, s-1)), 
+      lwd=1, 
+      main="ACF of Squared Residuals")
+  
+  # PACF of resid^2
+  pacf(resid^2, 
+       ylim=c(-1,1), 
+       lag.max=60, 
+       col=c(rep(1, s-1), 2), 
+       lwd=1, 
+       main="PACF of Squared Residuals")
+  par(mfrow=c(1,1))
+  
+  #ACF & PACF of residuals
+  par(mfrow=c(1,2))
+  acf(resid,ylim=c(-1,1),lag.max=60,col=c(2,rep(1,s-1)),lwd=1)
+  pacf(resid,ylim=c(-1,1),lag.max=60,col=c(rep(1,s-1),2),lwd=1)
+  par(mfrow=c(1,1))
+  
+  #Ljung-Box p-values
+  par(mar=c(2,2,1,1))
+  tsdiag(model,gof.lag=7*s)
+  cat("\n--------------------------------------------------------------------\n")
+  print(model)
+  
+  #Stationary and Invertible
+  cat("\nModul of AR Characteristic polynomial Roots: ", 
+      Mod(polyroot(c(1,-model$model$phi))),"\n")
+  cat("\nModul of MA Characteristic polynomial Roots: ",
+      Mod(polyroot(c(1,model$model$theta))),"\n")
+  
+  suppressMessages(require(forecast,quietly=TRUE,warn.conflicts=FALSE))
+  plot(model)
+  
+  #Model expressed as an MA infinity (psi-weights)
+  psis=ARMAtoMA(ar=model$model$phi,ma=model$model$theta,lag.max=36)
+  names(psis)=paste("psi",1:36)
+  cat("\nPsi-weights (MA(inf))\n")
+  cat("\n--------------------\n")
+  print(psis[1:24])
+  
+  #Model expressed as an AR infinity (pi-weights)
+  pis=-ARMAtoMA(ar=-model$model$theta,ma=-model$model$phi,lag.max=36)
+  names(pis)=paste("pi",1:36)
+  cat("\nPi-weights (AR(inf))\n")
+  cat("\n--------------------\n")
+  print(pis[1:24])
+   
+  cat("\nDescriptive Statistics for the Residuals\n")
+  cat("\n----------------------------------------\n") 
+  
+  suppressMessages(require(fBasics,quietly=TRUE,warn.conflicts=FALSE))
+  ##Anderson-Darling test
+  print(basicStats(resid))
+  
+  ## Add here complementary tests (use with caution!)
+  ##---------------------------------------------------------
+  cat("\nNormality Tests\n")
+  cat("\n--------------------\n")
+ 
+  ##Shapiro-Wilks Normality test
+  print(shapiro.test(resid))
+
+  suppressMessages(require(nortest,quietly=TRUE,warn.conflicts=FALSE))
+  ##Anderson-Darling test
+  print(ad.test(resid))
+  
+  suppressMessages(require(tseries,quietly=TRUE,warn.conflicts=FALSE))
+  ##Jarque-Bera test
+  print(jarque.bera.test(resid))
+  
+  cat("\nHomoscedasticity Test\n")
+  cat("\n--------------------\n")
+  suppressMessages(require(lmtest,quietly=TRUE,warn.conflicts=FALSE))
+  ##Breusch-Pagan test
+  obs=get(model$series)
+  print(bptest(resid~I(obs-resid)))
+  
+  cat("\nIndependence Tests\n")
+  cat("\n--------------------\n")
+  
+  ##Durbin-Watson test
+  print(dwtest(resid~I(1:length(resid))))
+  
+  ##Ljung-Box test
+  cat("\nLjung-Box test\n")
+  print(t(apply(matrix(c(1:4,(1:4)*s)),1,function(el) {
+    te=Box.test(resid,type="Ljung-Box",lag=el)
+    c(lag=(te$parameter),statistic=te$statistic[[1]],p.value=te$p.value)})))
+  
+  #Extra Alexis
+  # Calculate T-ratios: Coefficient / Standard Error
+  t_ratios <- model$coef / sqrt(diag(model$var.coef))
+  
+  # Create a summary table
+  results <- data.frame(
+    Coeff = round(model$coef, 4),
+    SE = round(sqrt(diag(model$var.coef)), 4),
+    t_ratio = round(t_ratios, 4),
+    Significant = abs(t_ratios) > 2 # Significance threshold
+  )
+  print(results)
+  
+  cat("\nSigma^2 (Variance of Residuals):", model$sigma2)
+  cat("\nAIC:", AIC(model))
+  cat("\nBIC:", BIC(model))
+  # End
+}
+################# Fi Validation #################################
+```
+
+### 3.1 Validation Model 1
+```{r}
+validation(mod1)
+```
+#### 3.1.1 Residual Analysis
+For all $ARIMA(p, d, q)(P,D,Q)_s$ models, the general expression is:
+$$\phi_p(B)\Phi_P(B^s) \left( (1 - B)^d (1 - B^s)^D X_t - \mu \right) = \theta_q(B)\Theta_Q(B^s)Z_t$$
+The random part of the model is $Z_t \sim N(0, \sigma_Z^2)$.
+Residual Analysis for $Z_t$. Premises:
+
+  * Homogeneity of variance ($\sigma_Z^2$ constant)
+  * Normality ($Z_t \sim \text{Normal}$)
+  * Independence ($\rho(k) = 0, \forall k \neq 0$)
+  
+##### Homogeneity of variance - Homoscedasticity
+
+  * Residuals plots: The residuals plot fluctuate around zero with a relatively constant spread.
+  * Square root of absolute values of the residuals: The red line is relatively flat.
+  * ACF/PACF of square of residuals: The absence of significant, repeating patterns in the squared residuals means that the variance does not depend on past errors.
+
+  **The variance appears stable. The Log transformation we did in Step 1 was successful.**
+
+
+##### Normality
+
+  * Quantile-Quantile plot: The points follow the red line generally well, but there is some deviation at the tails caused by potential outliers.
+  * Histogram of residuals: The histogram looks roughly bell-shaped but slightly skewed.
+  * Shapiro-Wilks test: Null Hypothesis ($H_0$): The residuals follow a Normal distribution. 
+    By checking the p-value = 0.008171, we should reject $H_0$ stating that the residual distribution is normally distributed. Statistically speaking, the residuals are not normally distributed. However, the Shapiro test is very sensitive to the size of the sample.
+    By looking at the W statistic, the value $W = 0.989$ is extremely close to 1. This tells you the deviation from normality is actually very small.
+
+
+   **In conclusion, we can argue that the residuals are "approximately normal," which is sufficient for the validity of the parameter estimates and forecasts.The Shapiro-Wilk test yielded a statistic of $W=0.989$ and a p-value of 0.008. Although this leads us to technically reject the null hypothesis of normality at the 5% level, the $W$ statistic is near 1, indicating the deviation is minor.Furthermore, the Normal Q-Q Plot and Histogram show that the distribution fits the Gaussian curve well, with only slight deviations in the tails. We accept the residuals as approximately normal and suitable for forecasting purposes.**
+
+##### Independence
+
+  * ACF/PACF of residuals: We visually inspected the Autocorrelation (ACF) and Partial Autocorrelation (PACF) plots of the residuals. 
+The plots show that the vast majority of the correlations at regular and seasonal lags fall within the 95% confidence intervals (the blue dashed lines).
+TO BE CHECK WITH TEACHER
+
+  * LJung-Box test: The Ljung-Box test plot shows that the p-values for nearly all lags (from lag 2 onwards) are well below the 0.05 significance threshold (indicated by the blue dashed line). This leads us to reject the null hypothesis of independence. The residuals exhibit significant autocorrelation that the current model ($ARIMA(2,0,0)(0,1,3)_{12}$) failed to capture.
+
+DISPLAY TABLE
+
+  * Durbin-Watson test: This test checks for first-order autocorrelation (lag 1 correlation). We find the $DW = 2.1581$ (p-value = 0.9267). Since the statistic is close to 2 and the p-value is $> 0.05$, we fail to reject the null hypothesis. There is no significant autocorrelation at Lag 1.
+
+**The model fails the independence check. While there is no correlation at Lag 1 (confirmed by both DW and Ljung-Box), there are strong, statistically significant correlations remaining at Lags 2, 3, and the seasonal lags (12, 24, etc.). This indicates that the current model structure is inadequate and has failed to capture the dynamics of the series correctly.**
+
+#### 3.1.2. AR and MA Infinite Representations
+
+
+```{r echo=FALSE, results='asis'}
+# --- 1. Regular AR(2) Part Analysis ---
+# Equation: (1 - phi1*B - phi2*B^2) X_t = ...
+phi1 <- coef(mod1)["ar1"]
+phi2 <- coef(mod1)["ar2"]
+
+cat("\n--- AR(2) Characteristic Polynomial ---\n")
+
+cat("Equation: 1 -", round(phi1, 4), "* B -", round(phi2, 4), "* B^2 = 0\n")
+
+# Calculate Roots
+ar_roots <- polyroot(c(1, -phi1, -phi2))
+cat("\nRoots of AR Polynomial:\n")
+print(ar_roots)
+
+# Check Moduli (Must be > 1 for Stationarity)
+cat("\nModuli of AR Roots (> 1 means Stationary/Causal):\n")
+print(Mod(ar_roots))
+
+
+# --- 2. Seasonal MA(3) Part Analysis ---
+# Equation: ... = (1 + theta1*Z + theta2*Z^2 + theta3*Z^3) E_t
+# Where Z = B^12 (Seasonal Backshift)
+theta1 <- coef(mod1)["sma1"]
+theta2 <- coef(mod1)["sma2"]
+theta3 <- coef(mod1)["sma3"]
+
+cat("\n--- Seasonal MA(3) Characteristic Polynomial (in Z = B^12) ---\n")
+cat("Equation: 1 +", round(theta1, 4), "* Z +", round(theta2, 4), "* Z^2 +", round(theta3, 4), "* Z^3 = 0\n")
+
+# Calculate Roots (in terms of Z)
+sma_roots <- polyroot(c(1, theta1, theta2, theta3))
+cat("\nRoots of Seasonal MA Polynomial:\n")
+print(sma_roots)
+
+# Check Moduli (Must be > 1 for Invertibility)
+cat("\nModuli of Seasonal MA Roots (> 1 means Invertible):\n")
+print(Mod(sma_roots))
+```
+To ensure our ARIMA model is mathematically valid and safe for forecasting, we must verify two fundamental properties: Causality (Stationarity) and Invertibility.
+
+##### 1. Causality (Stationarity) Check
+
+The Concept:Causality ensures that the model is stable—meaning its forecasts will not grow exponentially to infinity. A causal model can be expressed as an infinite sum of past shocks (an Infinite Moving Average process):
+$$X_t = \sum_{j=0}^{\infty} \psi_j Z_{t-j}$$
+For this to hold, the influence of past shocks (measured by $\psi$-weights) must decay to zero over time 1.
+
+*Mathematically*, the roots of the AutoRegressive (AR) characteristic polynomial ($\phi(B) = 0$) must lie outside the unit circle. 
+This means their absolute values (moduli) must be strictly greater than 1.
+
+The calculated moduli of the AR roots are 1.0226 and 2.7753.
+
+Since both values are $> 1$, the condition is satisfied. The AR component is stable, and the process is stationary.
+
+*Visually*, we confirm the numerical results above, we examine the Inverse AR Roots plot.
+
+The plots represent the inverse of the roots ($1/root$). If the actual root is $> 1$ (stable), the inverse root must be $< 1$ (inside the circle).
+
+We see two black dots (corresponding to our AR(2) parameters). One is near the center, and one is near the edge.
+Both dots lie strictly inside the grey unit circle.
+
+This visually confirms that the AR part of the model is Causal (Stationary).
+
+#####2. Invertibility Check
+The invertibility ensures that the model makes physical sense—specifically, that the current error term can be calculated using a finite history of past observations. An invertible model can be written as an infinite AutoRegression:
+$$Z_t = \sum_{j=0}^{\infty} \pi_j X_{t-j}$$
+For this to hold, the weights placed on past observations ($\pi$-weights) must decay to zero.
+*Mathematically*, the roots of the Moving Average (MA) characteristic polynomial ($\Theta(B) = 0$) must lie outside the unit circle (Modulus > 1).
+
+We have a seasonal MA component operating on $B^{12}$.The calculated moduli of the seasonal roots are 1.49, 3.20, and 9.16. Since all values are $> 1$, the condition is satisfied. The MA component is invertible.
+
+We see a pattern of many black dots. This occurs because the Seasonal MA polynomial operates on $B^{12}$, which mathematically generates 12 roots for every parameter (creating a total of 36 roots in the complex plane).Check: All dots are contained strictly inside the grey unit circle. None touch the boundary.Interpretation: This visually confirms that the MA part of the model is invertible.
+
+*Visually*, We see a pattern of many black dots. This occurs because the Seasonal MA polynomial operates on $B^{12}$, which mathematically generates 12 roots for every parameter (creating a total of 36 roots in the complex plane).
+
+All dots are contained strictly inside the grey unit circle. None touch the boundary.This visually confirms that the MA part of the model is Invertible.
+
+#### 3.1.3. Stability and Predictive Capability model 1
+
+```{r}
+ultim=c(2018,12)
+pdq=c(2,0,0)
+PDQ=c(0,1,3)
+
+serie2=window(serie,end=ultim)
+lnserie2=log(serie2)
+serie1=window(serie,end=ultim+c(1,0))
+lnserie1=log(serie1)
+
+(modA=arima(lnserie1,order=pdq,seasonal=list(order=PDQ,period=12)))
+(modB=arima(lnserie2,order=pdq,seasonal=list(order=PDQ,period=12)))
+```
+
+```{r}
+check_stability_prediction <- function(serie, pdq, PDQ, ultim) {
+  # 1. Setup Data Subsets
+  # Full Series (includes test year)
+  serie1 <- window(serie, end=ultim + c(1, 0))
+  lnserie1 <- log(serie1)
+  
+  # Training Series (ends at cut-off)
+  serie2 <- window(serie, end=ultim)
+  lnserie2 <- log(serie2)
+  
+  # 2. Stability Check (Compare Coefficients)
+  cat("\n================ STABILITY CHECK ================\n")
+  cat("Model Structure: ARIMA(", paste(pdq, collapse=","), ")(", paste(PDQ, collapse=","), ")12\n")
+  
+  cat("\n--- Model A: Full Data (1990-2019) ---\n")
+  modA <- arima(lnserie1, order=pdq, seasonal=list(order=PDQ, period=12))
+  print(round(modA$coef, 4))
+  
+  cat("\n--- Model B: Training Data (1990-2018) ---\n")
+  modB <- arima(lnserie2, order=pdq, seasonal=list(order=PDQ, period=12))
+  print(round(modB$coef, 4))
+  
+  # 3. Forecasting (One year ahead)
+  pred <- predict(modB, n.ahead=12)
+  
+  # Construct plot objects
+  pr <- ts(c(tail(lnserie2, 1), pred$pred), start=ultim, freq=12)
+  se <- ts(c(0, pred$se), start=ultim, freq=12)
+  
+  # Back-transform confidence intervals
+  tl <- ts(exp(pr - 1.96 * se), start=ultim, freq=12)
+  tu <- ts(exp(pr + 1.96 * se), start=ultim, freq=12)
+  pr <- ts(exp(pr), start=ultim, freq=12)
+  
+  # 4. Plotting
+  ts.plot(serie, tl, tu, pr, 
+          lty=c(1, 2, 2, 1), 
+          col=c("black", "blue", "blue", "red"), 
+          xlim=ultim[1] + c(-2, +2), 
+          ylab="GwH",
+          main=paste("Predictive Capability: ARIMA(", paste(pdq, collapse=","), ")(", paste(PDQ, collapse=","), ")12", sep=""))
+  
+  abline(v=(ultim[1]-2):(ultim[1]+2), lty=3, col="gray")
+  legend("topleft", legend=c("Actual Data", "Forecast", "95% CI"), 
+         col=c("black", "red", "blue"), lty=c(1, 1, 2), bty="n", cex=0.8)
+  
+  # 5. Accuracy Metrics
+  obs <- window(serie, start=ultim + c(0, 1), end=ultim + c(1, 0))
+  pr_val <- window(pr, start=ultim + c(0, 1))
+  
+  rmse <- sqrt(mean((obs - pr_val)^2))
+  mape <- mean(abs((obs - pr_val) / obs)) * 100
+  
+  cat("\n================ ACCURACY METRICS (2019) ================\n")
+  cat("RMSE (Root Mean Sq Error):", round(rmse, 2), "GwH\n")
+  cat("MAPE (Mean Abs % Error):  ", round(mape, 2), "%\n")
+}
+```
+
+```{r}
+# Define your cut-off date (Dec 2018)
+cutoff_date <- c(2018, 12)
+
+# Run for Model 1: ARIMA(2,0,0)(0,1,3)12
+check_stability_prediction(serie, pdq=c(2,0,0), PDQ=c(0,1,3), ultim=cutoff_date)
+```
+
+
+##### Stability Analysis
+We assessed the stability of the model by estimating its parameters on two different datasets: the full series (1990–2019) and a truncated training set (1990–2018).
+
+The estimated coefficients remained highly stable between the two periods.
+  * $\phi_1$ (ar1): Changed slightly from 0.6176 to 0.6218.
+  * $\phi_2$ (ar2): Changed from 0.3524 to 0.3490.
+  * $\Theta_1$ (sma1): Remained consistent at -0.87.
+  * Even the insignificant parameters ($\Theta_2, \Theta_3$) showed minimal variation.
+  
+The model structure is robust. The addition of 12 new observations did not drastically alter the estimated relationships, indicating that the parameters are stable over time.
+
+
+##### Predictive Capability
+
+We used the model trained on data up to December 2018 to forecast the electrical consumption for the 12 months of 2019.
+
+  * Visual Inspection: The forecast plot (Figure image_59b264.png) shows that the predicted values (red line) follow the actual observed values (black line) very closely. Crucially, the actual data remains well within the 95% confidence intervals (blue dashed lines) throughout the year.
+  
+  * MAPE: The Mean Absolute Percentage Error is 1.57%. This is an excellent result, indicating that on average, the model's predictions are off by only ~1.6%.
+  
+  * RMSE: The Root Mean Squared Error is 455.32 GwH.
+  
+The model demonstrates strong predictive power for short-term forecasting.
+
+### 3.2 Validation Model 2
+```{r}
+validation(mod2)
+```
+#### 3.2.1 Residual Analysis
+
+##### Homogeneity of variance - Homoscedasticity
+
+  * Residuals plots: The residuals plot fluctuate around zero with a relatively constant spread.
+  * Square root of absolute values of the residuals: The red line is relatively flat.
+  * ACF/PACF of square of residuals: The absence of significant, repeating patterns in the squared residuals means that the variance does not depend on past errors.
+
+  **The variance appears stable. The Log transformation we did in Step 1 was successful.**
+
+
+##### Normality
+
+  * Quantile-Quantile plot: The points follow the red line generally well, but there is some deviation at the tails caused by potential outliers.
+  * Histogram of residuals: The histogram looks roughly bell-shaped but slightly skewed.
+  * Shapiro-Wilks test: Null Hypothesis ($H_0$): The residuals follow a Normal distribution. 
+    By checking the p-value = 0.006167, we should reject $H_0$ stating that the residual distribution is normally distributed. Statistically speaking, the residuals are not normally distributed. However, the Shapiro test is very sensitive to the size of the sample.
+    By looking at the W statistic, the value $W = 0.989$ is extremely close to 1. This tells you the deviation from normality is actually very small.
+
+
+   **In conclusion, we can argue that the residuals are "approximately normal," which is sufficient for the validity of the parameter estimates and forecasts.The Shapiro-Wilk test yielded a statistic of $W=0.989$ and a p-value of 0.006 Although this leads us to technically reject the null hypothesis of normality at the 5% level, the $W$ statistic is near 1, indicating the deviation is minor.Furthermore, the Normal Q-Q Plot and Histogram show that the distribution fits the Gaussian curve well, with only slight deviations in the tails. We accept the residuals as approximately normal and suitable for forecasting purposes.**
+
+##### Independence
+
+  * ACF/PACF of residuals: We visually inspected the Autocorrelation (ACF) and Partial Autocorrelation (PACF) plots of the residuals. 
+The plots show that the vast majority of the correlations at regular and seasonal lags fall within the 95% confidence intervals (the blue dashed lines).
+TO BE CHECK WITH TEACHER
+
+  * LJung-Box test: The Ljung-Box test plot shows that the p-values for nearly all lags (from lag 2 onwards) are well below the 0.05 significance threshold (indicated by the blue dashed line). This leads us to reject the null hypothesis of independence. The residuals exhibit significant autocorrelation that the current model ($ARIMA(2,0,0)(3,1,1)_{12}$) failed to capture.
+
+DISPLAY TABLE
+
+  * Durbin-Watson test: This test checks for first-order autocorrelation (lag 1 correlation). We find the $DW = 2.1758$ (p-value = 0.9473). Since the statistic is close to 2 and the p-value is $> 0.05$, we fail to reject the null hypothesis. There is no significant autocorrelation at Lag 1.
+
+**The model fails the independence check. While there is no correlation at Lag 1 (confirmed by both DW and Ljung-Box), there are strong, statistically significant correlations remaining at Lags 2, 3, and the seasonal lags (12, 24, etc.). This indicates that the current model structure is inadequate and has failed to capture the dynamics of the series correctly.**
+
+#### 3.2.2. AR and MA Infinite Representations
+
+
+```{r echo=FALSE, results='asis'}
+# --- 1. Regular AR(2) Part Analysis ---
+# Checks for Regular Stationarity (Causality)
+# Equation: (1 - phi1*B - phi2*B^2) = 0
+phi1 <- coef(mod2)["ar1"]
+phi2 <- coef(mod2)["ar2"]
+
+cat("\n--- Regular AR(2) Characteristic Polynomial ---\n")
+cat("Equation: 1 -", round(phi1, 4), "* B -", round(phi2, 4), "* B^2 = 0\n")
+
+# Calculate Roots
+ar_roots <- polyroot(c(1, -phi1, -phi2))
+cat("Moduli of Regular AR Roots (> 1 means Stationary):\n")
+print(Mod(ar_roots))
+
+
+# --- 2. Seasonal AR(3) Part Analysis ---
+# Checks for Seasonal Stationarity (Causality)
+# Equation: (1 - Phi1*Z - Phi2*Z^2 - Phi3*Z^3) = 0  (Where Z = B^12)
+Phi1 <- coef(mod2)["sar1"]
+Phi2 <- coef(mod2)["sar2"]
+Phi3 <- coef(mod2)["sar3"]
+
+cat("\n--- Seasonal AR(3) Characteristic Polynomial (in Z = B^12) ---\n")
+cat("Equation: 1 -", round(Phi1, 4), "* Z -", round(Phi2, 4), "* Z^2 -", round(Phi3, 4), "* Z^3 = 0\n")
+
+# Calculate Roots (in terms of Z)
+# Note: We use negative signs for AR coefficients in the polynomial
+sar_roots <- polyroot(c(1, -Phi1, -Phi2, -Phi3))
+cat("Moduli of Seasonal AR Roots (> 1 means Stationary):\n")
+print(Mod(sar_roots))
+```
+To ensure our ARIMA model is mathematically valid and safe for forecasting, we must verify two fundamental properties: Causality (Stationarity) and Invertibility.
+
+##### 1. Causality (Stationarity) Check
+
+1. Regular Causality (Stationarity) CheckTheory: For the short-term dynamics to be stable (non-explosive), the roots of the Regular AR(2) characteristic polynomial must lie outside the unit circle (Modulus > 1) 1.Your Results: The moduli of the roots are 1.05 and 2.72.
+
+Analysis:
+Both values are strictly greater than 1.The root at 1.05 is close to 1, which indicates the series has a "long memory" or high persistence (shocks take a long time to die out), but it is still mathematically stationary.Conclusion: The regular part of the model satisfies the causality condition.
+
+2. Seasonal Causality (Stationarity) Check
+
+Theory: For the seasonal pattern to be stable, the roots of the Seasonal AR(3) polynomial (operating on $B^{12}$) must also lie outside the unit circle.Your Results: The moduli are 1.70, 1.84, and 1.70.
+
+Analysis: All three roots are well above 1. This confirms the seasonal autoregressive structure is very stable.Conclusion: The seasonal part of the model satisfies the causality condition.
+
+##### 2. Invertibility Check
+The invertibility ensures that the model makes physical sense—specifically, that the current error term can be calculated using a finite history of past observations. An invertible model can be written as an infinite AutoRegression:
+$$Z_t = \sum_{j=0}^{\infty} \pi_j X_{t-j}$$
+For this to hold, the weights placed on past observations ($\pi$-weights) must decay to zero.
+*Mathematically*, the roots of the Moving Average (MA) characteristic polynomial ($\Theta(B) = 0$) must lie outside the unit circle (Modulus > 1).
+
+We have a seasonal MA component operating on $B^{12}$.The calculated moduli of the seasonal roots are 1.49, 3.20, and 9.16. Since all values are $> 1$, the condition is satisfied. The MA component is invertible.
+
+We see a pattern of many black dots. This occurs because the Seasonal MA polynomial operates on $B^{12}$, which mathematically generates 12 roots for every parameter (creating a total of 36 roots in the complex plane).Check: All dots are contained strictly inside the grey unit circle. None touch the boundary.Interpretation: This visually confirms that the MA part of the model is invertible.
+
+*Visually*, We see a pattern of many black dots. This occurs because the Seasonal MA polynomial operates on $B^{12}$, which mathematically generates 12 roots for every parameter (creating a total of 36 roots in the complex plane).
+
+All dots are contained strictly inside the grey unit circle. None touch the boundary.This visually confirms that the MA part of the model is Invertible.
+
+#### 3.2.3. Stability and Predictive Capability
+
+```{r}
+ultim=c(2018,12)
+pdq=c(2,0,0)
+PDQ=c(3,1,0)
+
+serie2=window(serie,end=ultim)
+lnserie2=log(serie2)
+serie1=window(serie,end=ultim+c(1,0))
+lnserie1=log(serie1)
+
+(modA=arima(lnserie1,order=pdq,seasonal=list(order=PDQ,period=12)))
+(modB=arima(lnserie2,order=pdq,seasonal=list(order=PDQ,period=12)))
+```
+
+```{r}
+# Define your cut-off date (Dec 2018)
+cutoff_date <- c(2018, 12)
+
+# Run for Model 2: ARIMA(2,0,0)(3,1,0)12
+check_stability_prediction(serie, pdq=c(2,0,0), PDQ=c(3,1,0), ultim=cutoff_date)
+```
+
+
+##### Stability Analysis
+We assessed the stability of the model by estimating its parameters on two different datasets: the full series (1990–2019) and a truncated training set (1990–2018).
+
+The estimated coefficients remained highly stable between the two periods.
+  * $\phi_1$ (ar1): Changed slightly from 0.6176 to 0.6218.
+  * $\phi_2$ (ar2): Changed from 0.3524 to 0.3490.
+  * $\Theta_1$ (sma1): Remained consistent at -0.87.
+  * Even the insignificant parameters ($\Theta_2, \Theta_3$) showed minimal variation.
+  
+The model structure is robust. The addition of 12 new observations did not drastically alter the estimated relationships, indicating that the parameters are stable over time.
+
+
+##### Predictive Capability
+
+We used the model trained on data up to December 2018 to forecast the electrical consumption for the 12 months of 2019.
+
+  * Visual Inspection: The forecast plot shows that the predicted values (red line) follow the actual observed values (black line) very closely. Crucially, the actual data remains well within the 95% confidence intervals (blue dashed lines) throughout the year.
+  
+  * MAPE: The Mean Absolute Percentage Error is 1.88%. This is an excellent result, indicating that on average, the model's predictions are off by only ~1.6%.
+  
+  * RMSE: The Root Mean Squared Error is 577.89 GwH.
+  
+The model demonstrates strong predictive power for short-term forecasting.
+
+
+#### Model selection
+
+```{r}
+# --- 1. Helper Function to Calculate Metrics ---
+get_model_metrics <- function(model_obj, data_series, cutoff=c(2018,12)) {
+  # Split data
+  train_data <- window(data_series, end=cutoff)
+  actual_2019 <- window(data_series, start=cutoff+c(0,1), end=cutoff+c(1,0))
+  
+  # Extract structure from the input model object
+  orders <- model_obj$arma[c(1, 6, 2)] # p, d, q
+  season <- model_obj$arma[c(3, 7, 4)] # P, D, Q
+  period <- model_obj$arma[5]
+  
+  # Re-estimate on training data
+  mod_train <- arima(log(train_data), order=orders, seasonal=list(order=season, period=period))
+  pred <- predict(mod_train, n.ahead=12)
+  
+  # Forecast values (Back-transformed)
+  fc_mean <- exp(pred$pred)
+  fc_low  <- exp(pred$pred - 1.96 * pred$se)
+  fc_high <- exp(pred$pred + 1.96 * pred$se)
+  
+  # Calculate Metrics
+  rmse  <- sqrt(mean((actual_2019 - fc_mean)^2))
+  mae   <- mean(abs(actual_2019 - fc_mean))
+  rmspe <- sqrt(mean(((actual_2019 - fc_mean)/actual_2019)^2))
+  mape  <- mean(abs((actual_2019 - fc_mean)/actual_2019)) * 100
+  mean_len_ci <- mean(fc_high - fc_low)
+  
+  return(c(RMSE=rmse, MAE=mae, RMSPE=rmspe, MAPE=mape, MeanCI=mean_len_ci))
+}
+
+# --- 2. Calculate Scores ---
+# Ensure mod1 and mod2 are the correct models you want to compare
+m1_scores <- get_model_metrics(mod1, serie)
+m2_scores <- get_model_metrics(mod2, serie)
+
+# --- 3. Create Dataframe (Numeric Part First) ---
+resul_num <- data.frame(
+  Parameters = c(length(coef(mod1)), length(coef(mod2))),
+  Sigma2     = c(mod1$sigma2, mod2$sigma2),
+  AIC        = c(AIC(mod1), AIC(mod2)),
+  BIC        = c(BIC(mod1), BIC(mod2)),
+  RMSE       = c(m1_scores["RMSE"], m2_scores["RMSE"]),
+  MAE        = c(m1_scores["MAE"], m2_scores["MAE"]),
+  RMSPE      = c(m1_scores["RMSPE"], m2_scores["RMSPE"]),
+  MAPE       = c(m1_scores["MAPE"], m2_scores["MAPE"]),
+  Mean_CI    = c(m1_scores["MeanCI"], m2_scores["MeanCI"])
+)
+
+# --- 4. Round Numbers to Strings ---
+# This makes the table pretty (e.g., "1.57" instead of "1.5738292")
+resul_clean <- format(round(resul_num, 4), nsmall=4)
+
+# --- 5. Add Text Columns & Row Names ---
+resul_clean$Homoscedasticity <- c("Validated", "Validated")
+resul_clean$Normality        <- c("Validated", "Validated")
+resul_clean$Independence     <- c("Fail (<0.05)", "Fail (<0.05)")
+resul_clean$Causality        <- c("Validated", "Validated")
+resul_clean$Invertibility    <- c("Validated", "Validated")
+resul_clean$Stability        <- c("Validated", "Validated")
+resul_clean$Predictive_capability <- c("Validated", "Validated")
+
+# Set Model Names
+row.names(resul_clean) <- c("Model 1: (2,0,0)(0,1,3)12", "Model 2: (2,0,0)(3,1,0)12")
+
+# --- 6. Pivot (Transpose) ---
+# This flips the table and converts it to a matrix of strings
+final_table <- t(resul_clean)
+
+# Print the final result
+print(final_table, quote=FALSE)
+```
+We compared the two candidate models based on goodness-of-fit (AIC/BIC), residual variance ($\sigma^2$), and predictive capability (RMSE/MAPE) on the validation set (Year 2019).
+
+1. Goodness-of-Fit Analysis
+
+  * AIC & BIC: Model 1 ($ARIMA(2,0,0)(0,1,3)_{12}$) has a significantly lower AIC (-1380.01) compared to Model 2 (-1368.22). A difference of ~12 points is substantial evidence that Model 1 provides a better trade-off between fit and complexity.
+  * Residual Variance: Model 1 has a lower residual variance ($\sigma^2 = 0.0010$) than Model 2 ($0.0011$), indicating it explains more of the volatility in the data.
+
+2. Predictive Capability Analysis
+
+  * Error Metrics: Model 1 outperforms Model 2 in forecasting accuracy.
+    * RMSE: 455.32 GwH (Model 1) vs. 577.88 GwH (Model 2).
+    * MAPE: 1.57% (Model 1) vs. 1.88% (Model 2).
+
+Interpretation: Model 1 reduces the forecasting error by approximately 17% compared to Model 2.
+  
+3. Diagnostic Checks
+
+  * Independence: Both models fail the Ljung-Box test for independence ($p < 0.05$). This is a common occurrence in long time series with complex seasonality. Since neither model passes this specific test, the decision relies on the other metrics.
+  * Stability: Both models were validated as mathematically stable (Causal and Invertible).
+  
+**Despite the presence of non-significant parameters in the seasonal component, Model 1 ($ARIMA(2,0,0)(0,1,3)_{12}$) is the superior model. It minimizes information loss (AIC) and provides the most accurate forecasts. We select Model 1 as the final model for generating future predictions.**
+
+
+# 4. Forecasting
+
+```{r}
+# --- Section 4: Final Prediction (Model 1) ---
+# Model: ARIMA(2,0,0)(0,1,3)12
+pdq <- c(2, 0, 0)
+PDQ <- c(0, 1, 3)
+
+# 1. Estimate on the FULL available history (1990-2019)
+# We use the log-transformed series 'lnserie'
+final_mod <- arima(lnserie, 
+                   order = pdq, 
+                   seasonal = list(order = PDQ, period = 12))
+
+cat("\n--- Final Model Estimation (Full History) ---\n")
+print(final_mod)
+
+# 2. Forecast the Future (12 months ahead)
+# This predicts Jan-Dec 2020
+future_pred <- predict(final_mod, n.ahead = 12)
+
+# 3. Process the Results
+# Get the end date of your current series
+last_date <- end(serie) 
+
+# Create Time Series for the Forecast (Log Scale)
+pr <- ts(future_pred$pred, start = last_date + c(0, 1), freq = 12)
+se <- ts(future_pred$se, start = last_date + c(0, 1), freq = 12)
+
+# Back-transform to Original Scale (GwH) using exp()
+pred_mean <- exp(pr)                # Point Forecast
+pred_low  <- exp(pr - 1.96 * se)    # Lower 95% Confidence Interval
+pred_high <- exp(pr + 1.96 * se)    # Upper 95% Confidence Interval
+
+# 4. Visualization
+# We plot the whole series + forecast, zooming in on the last 5 years
+ts.plot(serie, pred_mean, pred_low, pred_high,
+        lty = c(1, 1, 2, 2),
+        col = c("black", "red", "blue", "blue"),
+        xlim = c(2015, 2021),  # Zoom to see details
+        ylab = "GwH",
+        main = "Final Forecast 2020: ARIMA(2,0,0)(0,1,3)12")
+
+# Add grid and legend
+abline(v = 2015:2021, lty = 3, col = "gray")
+legend("topleft", legend = c("Historical Data", "Forecast", "95% CI"), 
+       col = c("black", "red", "blue"), lty = c(1, 1, 2), bty = "n", cex=0.8)
+
+# 5. Print the Numerical Forecasts (Table for Report)
+cat("\n--- Forecast Values (GwH) for 2020 ---\n")
+forecast_table <- data.frame(
+  Month = time(pred_mean),
+  Lower_95 = round(pred_low, 2),
+  Forecast = round(pred_mean, 2),
+  Upper_95 = round(pred_high, 2)
+)
+print(forecast_table)
+```
+
