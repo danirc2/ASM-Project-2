@@ -81,6 +81,10 @@ cat("Variance of d1d12 (Seasonal + Regular):", var(d1d12lnserie, na.rm=TRUE), "\
 
 To determine the order of differencing, we compared the variance of the seasonally differenced series ($\nabla_{12} \log X_t$) against the doubly differenced series ($\nabla \nabla_{12} \log X_t$). The variance of the seasonally differenced series was lower. According to the principle of parsimony and to avoid over-differencing (which artificially introduces correlations), we selected the model with only one seasonal difference. Thus, the final stationary series is $W_t = (1-B^{12})\log(X_t)$.
 
+```{r echo=FALSE}
+plot(d12lnserie, main="d12lnserie")
+```
+
 ### 1.b. ACF and PACF Analysis
     * Analyze the correlograms of the stationary series.
     * Identify at least two plausible ARIMA models.
@@ -95,8 +99,6 @@ pacf(d12lnserie,ylim=c(-1,1),col=c(rep(1,11),2),lwd=2,lag.max=72, main="PACF of 
 par(mfrow=c(1,1))
 ```
 
-MA 5
-Never p and q superior than 0 at the same time
 SARIMA(2,0,0)(0,1,3)
 SARIMA(2,0,0)(3,1,0)
 SARIMA(4,0,0)(0,1,3)
@@ -359,17 +361,14 @@ Residual Analysis for $Z_t$. Premises:
     By looking at the W statistic, the value $W = 0.989$ is extremely close to 1. This tells you the deviation from normality is actually very small.
 
 
-   **In conclusion, we can argue that the residuals are "approximately normal," which is sufficient for the validity of the parameter estimates and forecasts.The Shapiro-Wilk test yielded a statistic of $W=0.989$ and a p-value of 0.008. Although this leads us to technically reject the null hypothesis of normality at the 5% level, the $W$ statistic is near 1, indicating the deviation is minor.Furthermore, the Normal Q-Q Plot and Histogram show that the distribution fits the Gaussian curve well, with only slight deviations in the tails. We accept the residuals as approximately normal and suitable for forecasting purposes.**
+   **In conclusion, we can argue that the residuals are "approximately normal," which is sufficient for the validity of the parameter estimates and forecasts.The Shapiro-Wilk test yielded a statistic of $W=0.989$ and a p-value of 0.008. Although this leads us to technically reject the null hypothesis of normality at the 5% level, the $W$ statistic is near 1, indicating the deviation is minor. Furthermore, the Normal Q-Q Plot and Histogram show that the distribution fits the Gaussian curve well, with only slight deviations in the tails. We accept the residuals as approximately normal and suitable for forecasting purposes.**
 
 ##### Independence
 
   * ACF/PACF of residuals: We visually inspected the Autocorrelation (ACF) and Partial Autocorrelation (PACF) plots of the residuals. 
 The plots show that the vast majority of the correlations at regular and seasonal lags fall within the 95% confidence intervals (the blue dashed lines).
-TO BE CHECK WITH TEACHER
 
   * LJung-Box test: The Ljung-Box test plot shows that the p-values for nearly all lags (from lag 2 onwards) are well below the 0.05 significance threshold (indicated by the blue dashed line). This leads us to reject the null hypothesis of independence. The residuals exhibit significant autocorrelation that the current model ($ARIMA(2,0,0)(0,1,3)_{12}$) failed to capture.
-
-DISPLAY TABLE
 
   * Durbin-Watson test: This test checks for first-order autocorrelation (lag 1 correlation). We find the $DW = 2.1581$ (p-value = 0.9267). Since the statistic is close to 2 and the p-value is $> 0.05$, we fail to reject the null hypothesis. There is no significant autocorrelation at Lag 1.
 
